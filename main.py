@@ -9,6 +9,7 @@ INFINITY = float('inf')
 REFRESH_GRAPH_TIME = INFINITY
 GRAPH_FILE = "./binance_graph.json"
 RAW_TICKERS_FILE = "./raw_tickers.json"
+ORDER_BOOKS_FILE = "./order_books.json"
 
 def main():
     # bc = BinanceClient()
@@ -77,7 +78,67 @@ def show_arbitrage_tickers(graph: BinanceGraph, path: List[str]):
         
         print()  # Add a blank line for readability
 
-if __name__ == "__main__":
-    create_graph_if_needed()
-    main()
+# if __name__ == "__main__":
+#     create_graph_if_needed()
+def debug_depth():
+        # Initialize clients
+    bc = BinanceClient()
+    graph = BinanceGraph.load_from_json(GRAPH_FILE)
     
+    # Example path
+    # path = ['USDT', 'BTC', 'ETH', 'USDT']
+    # path = ['USDT', 'ETH', 'PLN', 'USDT']
+    path = ['USDT', 'BNB', 'ENA', 'USDT']
+    initial_amount = 100  # 10000 USDT
+    
+    # Get and save order books
+    order_books = bc.get_order_books_for_path(path, limit=100, file_path=ORDER_BOOKS_FILE)  # This will save to order_books.json
+    
+    # if not order_books:
+    #     print("Failed to fetch order books")
+    #     exit(1)
+    
+    # For debugging: Load from file
+    loaded_data = bc.load_order_books(ORDER_BOOKS_FILE)
+    if loaded_data:
+        print("\nLoaded order books data:")
+        print(f"Path: {loaded_data['path']}")
+        print("\nOrder Books:")
+        for symbol, book in loaded_data['order_books'].items():
+            print(f"\n{symbol}:")
+            print("Top 3 Bids:", book['bids'][:3])
+            print("Top 3 Asks:", book['asks'][:3])
+        
+        # Calculate PnL using loaded order books
+        pnl = graph.compute_pnl_arbitrage(path=path, amount=initial_amount, order_books=loaded_data['order_books'])
+        print(f"\nExpected PnL: {pnl}%")
+
+def find_profitable_arbitrage():
+    """
+    find all triangular arbitrage opportunities
+    then try to compute pnl for each one
+    """
+    bc = BinanceClient()
+    graph = bc.create_weighted_graph()
+    opportunities = graph.find_all_triangular_arbitrage(min_profit=1.0001)
+    for opp in opportunities:
+        # print(f"{opp[0]} -> {opp[1]} -> {opp[2]} -> {opp[0]}: Profit = {opp[3]:.2f}%")
+        # print(opp)
+        # create a path with the last currency added to the beginning
+        path = [*opp[:3], opp[0]]
+        print("Path: ", path)
+        print("Type of path: ", type(path))
+        
+        pnl = graph.compute_pnl_arbitrage(
+            path=opp[:3]+opp[:0], 
+            amount=1000, 
+            order_books=bc.get_order_books_for_path([*opp[:3],opp[0]], limit=100, file_path=None))
+        time.sleep(0.3)
+        if pnl > 0:
+            print("Opportunity found: ", opp[:3])
+            print(f"PnL: {pnl}%")
+
+if __name__ == "__main__":
+    # debug_depth()
+    find_profitable_arbitrage()
+

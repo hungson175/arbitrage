@@ -4,6 +4,7 @@ from binance.exceptions import BinanceAPIException, BinanceRequestException
 from typing import List, NamedTuple, Dict, Optional, Any
 from binance_graph import BinanceGraph, EdgeAlreadyExistsError
 import logging
+import time
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -203,6 +204,88 @@ class BinanceClient:
     def get_order_book(self, symbol: str, limit: int = 100) -> Dict[str, Any]:
         return self.client.get_order_book(symbol=symbol, limit=limit)
 
+    def get_order_books_for_path(self, path: List[str], limit: int = 100, file_path: str = None) -> Dict[str, Dict]:
+        """
+        Get order books for all trading pairs in the arbitrage path.
+        
+        Args:
+            path: List of currencies in the path (e.g., ['USDT', 'BTC', 'ETH', 'USDT'])
+            limit: Number of orders to fetch for each book
+            save_to_file: Whether to save the order books to 'order_books.json'
+        
+        Returns:
+            Dict mapping symbols to their order books
+        """
+        order_books = {}
+        print("Arbitrage path: ", path)
+        
+        # Get order books for each pair of currencies in the path
+        for i in range(len(path) - 1):
+            from_currency = path[i]
+            to_currency = path[i + 1]
+            
+            # Try both possible symbol formats
+            symbols = [f"{from_currency}{to_currency}", f"{to_currency}{from_currency}"]
+            symbol = next((s for s in symbols if s in self.symbol_info), None)
+            
+            if symbol is None:
+                raise ValueError(f"No valid trading pair found for {from_currency}-{to_currency}")
+                
+            try:
+                order_book = self.get_order_book(symbol, limit)
+                order_books[symbol] = order_book
+                logger.info(f"Fetched order book for {symbol}")
+            except (BinanceAPIException, BinanceRequestException) as e:
+                logger.error(f"Failed to fetch order book for {symbol}: {e}")
+                return {}
+        
+        if file_path is not None:
+            self._save_order_books(order_books, path, file_path)
+        
+        return order_books
+
+    def _save_order_books(self, order_books: Dict[str, Dict], path: List[str], file_path: str):
+        """
+        Save order books to a JSON file with timestamp and path info.
+        
+        Args:
+            order_books: Dictionary of order books to save
+            path: The currency path used to fetch these order books
+            file_path: The path to save the file to
+        """
+        timestamp = int(time.time())
+        
+        data = {
+            'timestamp': timestamp,
+            'path': path,
+            'order_books': order_books
+        }
+        
+        try:
+            with open(file_path, 'w') as f:
+                json.dump(data, f, indent=2)
+            logger.info(f"Order books saved to {file_path}")
+        except Exception as e:
+            logger.error(f"Failed to save order books: {e}")
+
+    def load_order_books(self, filename: str) -> Optional[Dict]:
+        """
+        Load order books from a JSON file.
+        
+        Args:
+            filename: Path to the JSON file containing order books
+        
+        Returns:
+            Dictionary containing timestamp, path, and order books data
+        """
+        try:
+            with open(filename, 'r') as f:
+                data = json.load(f)
+            logger.info(f"Order books loaded from {filename}")
+            return data
+        except Exception as e:
+            logger.error(f"Failed to load order books: {e}")
+            return None
 
 if __name__ == "__main__":
     bc = BinanceClient()

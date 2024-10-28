@@ -1,6 +1,6 @@
 from typing import List, Dict, Tuple
-import itertools
 import json
+
 
 class EdgeAlreadyExistsError(Exception):
     """Exception raised when trying to add an edge that already exists."""
@@ -74,6 +74,123 @@ class BinanceGraph:
         # sort the opportunities by profit percentage
         all_opportunities.sort(key=lambda x: x[3], reverse=True)
         return all_opportunities
+    
+    def compute_pnl_arbitrage(self, path: List[str], amount: float, order_books: Dict[str, Dict]) -> float:
+        """
+        Compute the PnL of an arbitrage opportunity considering order book depth.
+        
+        Args:
+            path: List of currencies in the arbitrage path (e.g., ['USDT', 'BTC', 'ETH', 'USDT'])
+            amount: Initial amount of the first currency
+            order_books: Dictionary mapping trading pairs to their order book data
+        
+        Returns:
+            float: Profit/Loss percentage
+        """
+        current_amount = amount
+
+        # Process each pair of currencies in the path
+        for i in range(len(path) - 1):
+            from_currency = path[i]
+            to_currency = path[i + 1]
+            
+            # Get the edge details and determine symbol
+            _, direction = self.edges[from_currency][to_currency]
+            symbol = self._determine_symbol(from_currency, to_currency, direction)
+            # print(f"Computing depth for symbol: {symbol}")
+            
+            # Execute the trade using order book
+            current_amount = self._execute_trade_with_orderbook(
+                symbol=symbol,
+                direction=direction,
+                amount=current_amount,
+                order_book=order_books.get(symbol),
+            )
+            
+            if current_amount <= 0:
+                return 0.0  # Insufficient liquidity
+        
+        # Return the profit/loss percentage
+        return (current_amount / amount - 1.0) * 100
+
+    def _determine_symbol(self, from_currency: str, to_currency: str, direction: int) -> str:
+        """
+        Determine the correct symbol format based on the trade direction.
+        
+        Args:
+            from_currency: Starting currency
+            to_currency: Target currency
+            direction: 1 for selling base currency, -1 for buying base currency
+        
+        Returns:
+            str: Properly formatted symbol (e.g., 'BTCUSDT')
+        """
+        base_quote_pair = f"{from_currency}{to_currency}"
+        quote_base_pair = f"{to_currency}{from_currency}"
+        return base_quote_pair if direction == 1 else quote_base_pair
+
+    def _execute_trade_with_orderbook(
+        self,
+        symbol: str,
+        direction: int,
+        amount: float,
+        order_book: Dict,
+    ) -> float:
+        """
+        Execute a trade using the order book data.
+        
+        Args:
+            symbol: Trading pair symbol (e.g., 'BTCUSDT')
+            direction: 1 for selling base currency, -1 for buying base currency
+            amount: Amount of from_currency to trade
+            order_book: Order book data for the symbol
+        
+        Returns:
+            float: Amount of to_currency received
+        """
+        if not order_book:
+            return -1
+            # raise ValueError(f"Order book not found for symbol {symbol}")
+        
+        # Use bids if selling (direction = 1), asks if buying (direction = -1)
+        orders = order_book['bids'] if direction == 1 else order_book['asks']
+        
+        # Pre-process orders based on direction
+        processed_orders = []
+        for price_str, qty_str in orders:
+            price = float(price_str)
+            qty = float(qty_str)
+            if direction == 1:  # Selling base currency
+                processed_orders.append((price, qty))  # Direct conversion rate
+            else:  # Buying base currency
+                processed_orders.append((1/price, qty*price))  # Inverse rate and adjusted quantity
+                
+        return self._process_orders(processed_orders, amount)
+
+    def _process_orders(self, processed_orders: List[Tuple[float, float]], amount: float) -> float:
+        """
+        Process pre-processed orders to calculate the final amount.
+        
+        Args:
+            processed_orders: List of (conversion_rate, available_amount) pairs
+            amount: Amount to trade
+        
+        Returns:
+            float: Amount received after the trade
+        """
+        remaining_amount = amount
+        new_amount = 0.0
+        
+        for conversion_rate, available_amt in processed_orders:
+            executable_amt = min(remaining_amount, available_amt)
+            new_amount += executable_amt * conversion_rate
+            remaining_amount -= executable_amt
+            
+            if remaining_amount <= 0:
+                return new_amount
+        
+        # If we get here, there wasn't enough liquidity
+        return 0.0
 
     def save_to_json(self, filename: str):
         """
@@ -112,3 +229,7 @@ class BinanceGraph:
         
         print(f"Graph loaded from {filename}")
         return graph
+
+
+
+
